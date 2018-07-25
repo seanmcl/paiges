@@ -36,7 +36,7 @@ private[paiges] object Chunk {
     }
 
     class ChunkIterator(var current: ChunkStream) extends Iterator[String] {
-      def hasNext: Boolean = (current != ChunkStream.Empty)
+      def hasNext: Boolean = current match { case ChunkStream.Item(_, _, _, _) => true; case _ => false }
       def next: String = {
         val item = current.asInstanceOf[ChunkStream.Item]
         val res = item.stringChunk
@@ -103,12 +103,17 @@ private[paiges] object Chunk {
     @tailrec
     def loop(pos: Int, lst: List[(Int, Doc)]): ChunkStream = lst match {
       case Nil => ChunkStream.Empty
-      case (i, Doc.Empty) :: z => loop(pos, z)
+      case (_, Doc.Empty) :: z => loop(pos, z)
       case (i, Doc.Concat(a, b)) :: z => loop(pos, (i, a) :: (i, b) :: z)
+      /*
+       * By invariant, there are no FlatAlt nodes if the Doc had been flattened.
+       * Since we're in this case, we just want the default.
+       */
+      case (i, Doc.FlatAlt(a, _)) :: z => loop(pos, (i, a) :: z)
       case (i, Doc.Nest(j, d)) :: z => loop(pos, ((i + j), d) :: z)
       case (_, Doc.Align(d)) :: z => loop(pos, (pos, d) :: z)
-      case (i, Doc.Text(s)) :: z => ChunkStream.Item(s, pos + s.length, z, false)
-      case (i, Doc.Line(_)) :: z => ChunkStream.Item(null, i, z, true)
+      case (_, Doc.Text(s)) :: z => ChunkStream.Item(s, pos + s.length, z, isBreak = false)
+      case (i, Doc.Line) :: z => ChunkStream.Item(null, i, z, isBreak = true)
       case (i, Doc.LazyDoc(d)) :: z => loop(pos, (i, d.evaluated) :: z)
       case (i, Doc.Union(x, y)) :: z =>
         /*

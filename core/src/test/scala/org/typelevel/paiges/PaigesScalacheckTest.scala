@@ -11,7 +11,7 @@ class PaigesScalacheckTest extends FunSuite {
   import Doc.text
 
   implicit val generatorDrivenConfig =
-    PropertyCheckConfiguration(minSuccessful = 500)
+    PropertyCheckConfiguration(minSuccessful = 3000)
 
   test("(x = y) -> (x.## = y.##)") {
     forAll { (a: Doc, b: Doc) =>
@@ -174,16 +174,23 @@ class PaigesScalacheckTest extends FunSuite {
      * x.grouped = (x.flatten | x) if x.flatten != x
      *             x otherwise
      *
-     * If c.flatten == c we have:
+     * If c.flatten == c and c is flattenable, we have:
      *   (a | b) * c == (a * c | b * c) and
      *   c * (a | b) == (c * a | c * b)
+     * (These can't even be expressed if c isn't flattenable, since
+     * non-flattenable docs can't appear on the left of a Union.)
      *
      * Since c.flatten == c, we have
      *   ab.grouped + c.flatten == (ab + c.flatten).grouped
      *   c.flatten + ab.grouped == (c.flatten + ab).grouped
+     * (If c is not flattenable, then none of the above equations hold.
+     *  For example, if ab = line + text("foo") and c = hardLine then
+     *  ab.grouped + c.flatten renders with one \n at a wide width
+     *  (since the first is flattened by grouped) while (ab + c.flatten).grouped
+     *  renders with two \n at any width.
      */
-    forAll { (ab: Doc, c: Doc) =>
-      val flatC = c.flatten
+    forAll { (ab: Doc, c: FlattenableDoc) =>
+      val flatC = c.doc.flatten
       val left = ab.grouped + flatC
       val right = (ab + flatC).grouped
       assert(left === right)
@@ -244,12 +251,13 @@ class PaigesScalacheckTest extends FunSuite {
       case Concat(Concat(_, _), _) => false
       case Empty | Text(_) => true
       case Concat(a, b) => ok(a) && ok(b)
-      case _ => throw new RuntimeException("Invariant failure")
+      case _ => throw new RuntimeException(s"Invariant failure: ${d}")
     }
+
     forAll { d: Union => ok(d.a) }
   }
 
-  test("Union invariant: length of the first (and only) line of a is >= length of the first line of b") {
+  test("Union invariant: length of the first (and only) non-failing line of a is >= length of the first line of b") {
     forAll { (w: ReasonableWidth, d: Union) =>
       d.a.renderStream(w.n).head.length >= d.b.renderStream(w.n).head.length
     }

@@ -9,18 +9,20 @@ object Generators {
   val asciiString: Gen[String] =
     for {
       n <- Gen.choose(1, 10)
-      cs <- Gen.listOfN(n, Gen.choose(32.toChar, 126.toChar))
+      cs <- Gen.listOfN(n, Gen.choose(65.toChar, 70.toChar))
     } yield cs.mkString
 
-  val generalString: Gen[String] =
-    implicitly[Arbitrary[String]].arbitrary
+  val generalString: Gen[String] = asciiString
+    //implicitly[Arbitrary[String]].arbitrary
 
   val doc0Gen: Gen[Doc] = Gen.frequency(
     (1, Doc.empty),
     (1, Doc.space),
     (1, Doc.line),
+    (1, Doc.hardLine),
     (1, Doc.lineBreak),
     (1, Doc.lineOrSpace),
+    (1, Doc.lineOrEmpty),
     (10, asciiString.map(text(_))),
     (10, generalString.map(text(_))),
     (3, asciiString.map(Doc.split(_))),
@@ -97,6 +99,13 @@ object Generators {
 
   implicit val arbNonEmptyUnion: Arbitrary[Doc.Union] = Arbitrary(nonEmptyUnionGen)
 
+  final case class FlattenableDoc(doc: Doc) extends AnyVal
+
+  implicit val flattenableDocGen: Gen[FlattenableDoc] =
+    genDoc.filter(_.flattenable).map(FlattenableDoc)
+
+  implicit val arbFlattenableDoc: Arbitrary[FlattenableDoc] = Arbitrary(flattenableDocGen)
+
   implicit val cogenDoc: Cogen[Doc] =
     Cogen[Int].contramap((d: Doc) => d.hashCode)
 
@@ -120,7 +129,7 @@ object Generators {
       case Text(s) => shrink(s).map(text)
       case Nest(i, d) => combine(d)(_.nested(i))
       case Align(d) => combine(d)(_.aligned)
-      case Line(_) | Empty | LazyDoc(_) => Stream.empty
+      case Line | Empty | LazyDoc(_) | FlatAlt(_, _) => Stream.empty
     }
   }
 
