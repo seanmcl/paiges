@@ -129,7 +129,7 @@ object Generators {
       case Text(s) => shrink(s).map(text)
       case Nest(i, d) => combine(d)(_.nested(i))
       case Align(d) => combine(d)(_.aligned)
-      case Line | Empty | LazyDoc(_) | FlatAlt(_, _) => Stream.empty
+      case Line | Empty | LazyDoc(_) | FlatAlt(_, _) | Nesting(_) => Stream.empty
     }
   }
 

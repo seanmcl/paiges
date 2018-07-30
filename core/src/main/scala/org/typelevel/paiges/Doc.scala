@@ -13,7 +13,7 @@ import scala.util.matching.Regex
  */
 sealed abstract class Doc extends Product with Serializable {
 
-  import Doc.{ Align, Empty, FlatAlt, Text, LazyDoc, Line, Nest, Concat, Union, FlattenResult }
+  import Doc.{ Align, Empty, FlatAlt, Text, LazyDoc, Line, Nest, Concat, Union, FlattenResult, Nesting }
   import FlattenResult._
 
   /**
@@ -127,6 +127,11 @@ sealed abstract class Doc extends Product with Serializable {
   def lineOrSpace(that: String): Doc =
     lineOrSpace(Doc.text(that))
 
+  /**
+   * Keep a document where it is, ignoring the nesting level.
+   */
+  def ignoreNesting: Doc = Doc.nesting(n => this.nested(-n))
+
   private[paiges] def isUnion: Boolean = this match {
     case Union(_, _) => true
     case _ => false
@@ -203,6 +208,7 @@ sealed abstract class Doc extends Product with Serializable {
         case Union(flattened, _) =>
           // flattening cannot change emptiness
           loop(flattened, stack)
+        case Nesting(f) => f(0).isEmpty // By invariant the argument is arbitrary.
       }
     loop(this, Nil)
   }
@@ -288,6 +294,7 @@ sealed abstract class Doc extends Product with Serializable {
       case LazyDoc(d) :: z => loop(d.evaluated :: z)
       case Union(_, b) :: z => loop(b :: z)
       case FlatAlt(a, _) :: z => loop(a :: z)
+      case Nesting(f) :: z => loop(f(0) :: z)
     }
     def cheat(lst: List[Doc]) = loop(lst)
 
@@ -446,6 +453,7 @@ sealed abstract class Doc extends Product with Serializable {
                   loop(Left(y) :: Right(", ") :: Left(x) :: Right("FlatAlt(") :: tail, ")" +: suffix)
                 case Union(x, y) =>
                   loop(Left(y) :: Right(", ") :: Left(x) :: Right("Union(") :: tail, ")" +: suffix)
+                case Nesting(_) => loop(tail, "Nesting(<closure>)" +: suffix)
               }
           }
         case Nil =>
@@ -506,6 +514,12 @@ sealed abstract class Doc extends Product with Serializable {
             case Nil => finish(h, front)
             case x :: xs => loop(x, xs, h :: front)
           }
+        case Nesting(f) =>
+          val next = (Nesting(n => f(n).flatten), true)
+          stack match {
+            case Nil => finish(next, front)
+            case x :: xs => loop(x, xs, next :: front)
+          }
         case Line => Unflattenable(this)
         case Nest(_, d) =>
           loop((d, h._2), stack, front) // no Line, so Nest is irrelevant
@@ -521,8 +535,9 @@ sealed abstract class Doc extends Product with Serializable {
 
   /**
    * Returns the largest width which may affect how this Doc
-   * renders. All widths larger than this amount are guaranteed to
-   * render the same.
+   * renders. If the Doc has no `Nesting`s, all widths larger than this amount
+   * are guaranteed to render the same.  `Nesting` makes it impossible to
+   * determine, so we compromise by recursing on the current max width.
    *
    * Note that this does not guarantee that all widths below this
    * value are distinct, just that they may be distinct. This value is
@@ -541,8 +556,8 @@ sealed abstract class Doc extends Product with Serializable {
       case (i, Text(s)) :: z => loop(pos + s.length, z, max)
       case (i, Line) :: z => loop(i, z, math.max(max, pos))
       case (i, LazyDoc(d)) :: z => loop(pos, (i, d.evaluated) :: z, max)
-      case (i, Union(a, _)) :: z =>
-          loop(pos, (i, a) :: z, max)
+      case (i, Union(a, _)) :: z => loop(pos, (i, a) :: z, max)
+      case (i, Nesting(f)) :: z => loop(pos, (i, f(max)) :: z, max)
     }
 
     loop(0, (0, this) :: Nil, 0)
@@ -602,7 +617,7 @@ object Doc {
    * is too long.  More precisely, in `Union(a, b)`, we have the
    * invariants:
    *
-   * - `a` consists entirely of {`Empty`, `Text`, `Concat`} nodes.
+   * - `a` consists entirely of {`Empty`, `Text`, `Concat`, `Nesting`} nodes.
    *   As a result, for all N, a.renderStream(N).length == 1` unless there are no Text
    *   nodes, in which case `a.renderStream(N).length == 0`.
    * - `a.flatten == a == b.flatten == Union(a, b).flatten`
@@ -618,6 +633,12 @@ object Doc {
    */
   private[paiges] case class Union(a: Doc, b: Doc) extends Doc
 
+  /**
+   * Invariant: The nesting argument can't affect emptiness.  More precisely,
+   *   In Nesting(f), forall N, (f(N) == empty iff (forall M, f(M) == empty))
+   */
+  private[paiges] case class Nesting(f: Int => Doc) extends Doc
+
   private[this] val maxSpaceTable = 20
 
   private[this] val spaceArray: Array[Text] =
@@ -630,6 +651,8 @@ object Doc {
    */
   def defer(d: => Doc): Doc =
     LazyDoc(new Thunk(d))
+
+  def nesting(f: Int => Doc): Doc = Nesting(f)
 
   /**
    * Produce a document of exactly `n` spaces.

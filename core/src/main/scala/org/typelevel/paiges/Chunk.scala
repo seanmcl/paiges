@@ -128,6 +128,7 @@ private[paiges] object Chunk {
          */
         if (fits(pos, first)) first
         else loop(pos, (i, y) :: z)
+      case (i, Doc.Nesting(f)) :: z => loop(pos, (i, f(i)) :: z)
     }
 
     def cheat(pos: Int, lst: List[(Int, Doc)]) =
